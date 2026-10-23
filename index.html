@@ -56,13 +56,90 @@ th,td{padding:10px 12px;text-align:right;vertical-align:top;border-bottom:1px so
 th{background:var(--ink);color:#fff;font-weight:500;font-size:.95rem}
 td.me{background:var(--badbg);color:var(--bad)}td.rt{background:var(--okbg);color:var(--ok);font-weight:500}
 td img{display:block;width:72px;height:auto;margin-bottom:6px}
-@media(max-width:620px){
- body{font-size:17px}h1{font-size:1.6rem}
- thead{position:absolute;left:-9999px}
- table,tbody,tr,td{display:block;width:100%}
- tr{border-bottom:8px solid var(--bg)}
- td{border:0}td[data-l]::before{content:attr(data-l);display:block;font-size:.8rem;font-weight:700;opacity:.7}
+
+@media (max-width: 620px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    font-size: 17px;
+  }
+
+  main#app {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-height: 100vh;
+    margin: 0 auto;
+    padding: 16px 16px 56px;
+    overflow: visible;
+  }
+
+  h1 {
+    font-size: 1.6rem;
+  }
+
+  .card {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .score {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .score b {
+    font-size: 2.8rem;
+  }
+
+  table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+  }
+
+  thead {
+    position: static;
+    left: auto;
+  }
+
+  tbody {
+    display: table-row-group;
+  }
+
+  tr {
+    display: table-row;
+  }
+
+  th,
+  td {
+    display: table-cell;
+    width: auto;
+    padding: 8px;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+
+  td img {
+    max-width: 60px;
+    height: auto;
+  }
+
+  .btn {
+    max-width: 100%;
+  }
 }
+
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -305,28 +382,199 @@ function draw() {
   }
 }
 
+
 function finish(timeUp) {
-  if (!S) return;
-  clearInterval(tick); window.onbeforeunload = null;
-  const secs = Math.min(C.EXAM_MINUTES * 60, Math.round((Date.now() - S.t0) / 1000));
-  const wrong = S.qs.filter(q => q.pick === null || !q.opts[q.pick].ok);
-  const score = TOTAL - wrong.length, pct = Math.round(score / TOTAL * 100), passed = score >= C.PASS_SCORE;
-  const rows = wrong.map(q => `<tr>
-    <td data-l="السؤال">${q.img ? `<img src="${q.img}" alt="إشارة مرور">` : ''}${esc(q.q)}</td>
-    <td class="me" data-l="إجابتك">${q.pick === null ? 'لم تجب' : esc(q.opts[q.pick].t)}</td>
-    <td class="rt" data-l="الإجابة الصحيحة">${esc(q.opts.find(o => o.ok).t)}</td></tr>`).join('');
-  app.innerHTML = `<div class="road"><i style="width:100%"></i></div>
-  <h1>${esc(S.name)}</h1>${timeUp ? '<p>انتهى الوقت.</p>' : ''}
-  <div class="card">
-    <div class="score"><b>${score}/${TOTAL}</b><span>${pct}%</span><span class="verdict ${passed ? 'ok' : 'no'}">${passed ? 'ناجح' : 'لم تصل إلى علامة النجاح'}</span></div>
-    <p class="save" id="sv">جارٍ حفظ النتيجة…</p>
-  </div>
-  <h2>${wrong.length ? `الأسئلة التي أخطأت فيها (${wrong.length})` : 'أجبت عن كل الأسئلة بشكل صحيح'}</h2>
-  ${wrong.length ? `<table><thead><tr><th>السؤال</th><th>إجابتك</th><th>الإجابة الصحيحة</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
-  <p style="margin-top:24px"><button class="btn" id="re">أعد الامتحان بأسئلة جديدة</button></p>`;
-  document.getElementById('re').onclick = () => start(S.name);
-  window.scrollTo(0, 0);
-  save({ attemptId: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now())+'-'+Math.random().toString(36).slice(2), name: S.name, score, total: TOTAL, percent: pct, passed, seconds: secs, wrong: wrong.map(q => q.id) });
+  if (!S || S.finished) return;
+
+  S.finished = true;
+  clearInterval(tick);
+  tick = null;
+  window.onbeforeunload = null;
+
+  const exam = S;
+  const name = exam.name;
+  const seconds = Math.max(
+    0,
+    Math.min(
+      C.EXAM_MINUTES * 60,
+      Math.round((Date.now() - exam.t0) / 1000)
+    )
+  );
+
+  // Calculate results safely
+  const wrong = exam.qs.filter(q => {
+    if (q.pick === null || q.pick === undefined) {
+      return true;
+    }
+
+    const selected = q.opts[q.pick];
+    return !selected || selected.ok !== true;
+  });
+
+  const score = TOTAL - wrong.length;
+  const percent = Math.round((score / TOTAL) * 100);
+  const passed = score >= C.PASS_SCORE;
+
+  // Prepare the Google Sheets record
+  const attemptId =
+    window.crypto &&
+    typeof window.crypto.randomUUID === 'function'
+      ? window.crypto.randomUUID()
+      : Date.now() + '-' +
+        Math.random().toString(36).slice(2);
+
+  const result = {
+    attemptId,
+    name,
+    score,
+    total: TOTAL,
+    percent,
+    passed,
+    seconds,
+    wrong: wrong.map(q => q.id)
+  };
+
+  // Render the main result immediately
+  app.innerHTML = `
+    <div class="road">
+      <i style="width:100%"></i>
+    </div>
+
+    <h1>نتيجة الامتحان</h1>
+
+    <div class="card">
+      <p><strong>اسم الطالب:</strong> ${esc(name)}</p>
+
+      <div class="score">
+        <b>${score}/${TOTAL}</b>
+        <span>${percent}%</span>
+      </div>
+
+      <p>
+        <span class="verdict ${passed ? 'ok' : 'no'}">
+          ${passed ? 'ناجح' : 'لم تصل إلى علامة النجاح'}
+        </span>
+      </p>
+
+      <p>الإجابات الصحيحة: ${score}</p>
+      <p>الإجابات الخاطئة أو غير المجابة: ${wrong.length}</p>
+      <p>الوقت المستغرق:
+        ${Math.floor(seconds / 60)} دقيقة
+        و ${seconds % 60} ثانية
+      </p>
+
+      ${timeUp ? '<p>انتهى وقت الامتحان.</p>' : ''}
+
+      <p class="save" id="sv">جارٍ إرسال النتيجة...</p>
+    </div>
+
+    <section id="review"></section>
+
+    <p style="margin-top:24px">
+      <button class="btn" id="re" type="button">
+        أعد الامتحان بأسئلة جديدة
+      </button>
+    </p>
+  `;
+
+  // Restart with the same student name
+  const restart = document.getElementById('re');
+
+  restart.onclick = () => {
+    start(name);
+    window.scrollTo(0, 0);
+  };
+
+  // Render answer review independently
+  try {
+    const review = document.getElementById('review');
+
+    if (wrong.length === 0) {
+      review.innerHTML = `
+        <h2>أجبت عن كل الأسئلة بشكل صحيح!</h2>
+      `;
+    } else {
+      const rows = wrong.map(q => {
+        const selected =
+          q.pick === null || q.pick === undefined
+            ? null
+            : q.opts[q.pick];
+
+        const correct = q.opts.find(o => o.ok === true);
+
+        const questionText = esc(q.q || '');
+        const selectedText = selected
+          ? esc(selected.t)
+          : 'لم تجب';
+
+        const correctText = correct
+          ? esc(correct.t)
+          : 'الإجابة غير متوفرة';
+
+        const image = q.img
+          ? `<img src="${esc(q.img)}" alt="إشارة مرور" loading="lazy">`
+          : '';
+
+        return `
+          <tr>
+            <td data-l="السؤال">
+              ${image}
+              ${questionText}
+            </td>
+
+            <td class="me" data-l="إجابتك">
+              ${selectedText}
+            </td>
+
+            <td class="rt" data-l="الإجابة الصحيحة">
+              ${correctText}
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      review.innerHTML = `
+        <h2>الأسئلة التي أخطأت فيها (${wrong.length})</h2>
+
+        <table>
+          <thead>
+            <tr>
+              <th>السؤال</th>
+              <th>إجابتك</th>
+              <th>الإجابة الصحيحة</th>
+            </tr>
+          </thead>
+
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+  } catch (error) {
+    console.error('Result review error:', error);
+
+    const review = document.getElementById('review');
+
+    if (review) {
+      review.textContent =
+        'تعذّر عرض مراجعة الإجابات، لكن نتيجة الامتحان محسوبة.';
+    }
+  }
+
+  // Save result independently of answer review
+  try {
+    Promise.resolve(save(result)).catch(error => {
+      console.error('Result submission error:', error);
+    });
+  } catch (error) {
+    console.error('Result submission error:', error);
+  }
+
+  // Scrolling should never prevent results from displaying
+  try {
+    window.scrollTo(0, 0);
+  } catch (error) {
+    console.warn('Scroll error:', error);
+  }
 }
 
 /* Scores go to a Google Sheet through Apps Script. Failed sends are kept and retried on the next visit. */
